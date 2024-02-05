@@ -1,0 +1,412 @@
+package org.fog.placement;
+
+import java.util.*;
+
+import org.cloudbus.cloudsim.core.CloudSim;
+import org.fog.application.AppEdge;
+import org.fog.application.AppModule;
+import org.fog.application.Application;
+import org.fog.entities.Actuator;
+import org.fog.entities.FogDevice;
+import org.fog.entities.Sensor;
+import org.fog.entities.Tuple;
+
+//import sun.security.util.Length;
+
+public class ModulePlacementOnlyCloud extends ModulePlacement{
+	
+	private List<Sensor> sensors;
+	private List<Actuator> actuators;
+	private int cloudId;
+	
+	public ModulePlacementOnlyCloud(List<FogDevice> fogDevices, List<Sensor> sensors, List<Actuator> actuators, Application application)
+	{
+		this.setFogDevices(fogDevices);
+		this.setApplication(application);
+		this.setSensors(sensors);
+		this.setActuators(actuators);
+		this.setModuleToDeviceMap(new HashMap<String, List<Integer>>());
+		this.setDeviceToModuleMap(new HashMap<Integer, List<AppModule>>());
+		this.setModuleInstanceCountMap(new HashMap<Integer, Map<String, Integer>>());
+		this.cloudId = CloudSim.getEntityId("cloud");
+		mapModules();
+		computeModuleInstanceCounts();
+	}
+	
+	private void computeModuleInstanceCounts(){
+		FogDevice cloud = getDeviceById(CloudSim.getEntityId("cloud"));
+		getModuleInstanceCountMap().put(cloud.getId(), new HashMap<String, Integer>());
+		
+		for(Sensor sensor : getSensors()){
+			String sensorType = sensor.getSensorName();
+			if(!getModuleInstanceCountMap().get(cloud.getId()).containsKey(sensorType))
+				getModuleInstanceCountMap().get(cloud.getId()).put(sensorType, 0);
+			getModuleInstanceCountMap().get(cloud.getId()).put(sensorType, getModuleInstanceCountMap().get(cloud.getId()).get(sensorType)+1);
+		}
+		
+		for(Actuator actuator : getActuators())
+		{
+			String actuatorType = actuator.getActuatorType();
+			if(!getModuleInstanceCountMap().get(cloud.getId()).containsKey(actuatorType))
+				getModuleInstanceCountMap().get(cloud.getId()).put(actuatorType, 0);
+			getModuleInstanceCountMap().get(cloud.getId()).put(actuatorType, getModuleInstanceCountMap().get(cloud.getId()).get(actuatorType)+1);
+		}
+		
+		while(!isModuleInstanceCalculationComplete())
+		{
+			for(AppModule module : getApplication().getModules())
+			{
+				int maxInstances = 0;
+				for(AppEdge edge : getApplication().getEdges()){
+					if(!getModuleInstanceCountMap().get(cloudId).containsKey(edge.getSource()))
+						continue;
+					if(edge.getDestination().equals(module.getName()) && edge.getDirection()==Tuple.UP){
+						maxInstances = Math.max(maxInstances, getModuleInstanceCountMap().get(cloudId).get(edge.getSource()));
+					}
+				}
+				getModuleInstanceCountMap().get(cloudId).put(module.getName(), maxInstances);
+			}
+		}
+		System.out.println(getModuleInstanceCountMap());
+	}
+
+	private boolean isModuleInstanceCalculationComplete() 
+	{
+		for(AppModule module : getApplication().getModules())
+		{
+			if(!getModuleInstanceCountMap().get(cloudId).containsKey(module.getName()))
+				return false;
+		}
+		return true;
+	}
+
+	Random r= new Random();
+	
+	@Override	
+	protected void mapModules() 
+	{
+		List<FogDevice> fogDevs=getFogDevices();		
+		int fogSize=fogDevs.size();		
+		Double[] util=new Double[fogSize];
+		Double[] hostEnergy=new Double[fogSize];
+		for(int l=0;l<fogSize;l++) 
+		{
+			util[l]=fogDevs.get(l).getHost().getUtilizationMips();
+			hostEnergy[l]=fogDevs.get(l).getEnergyConsumption();
+			//System.out.println(fogDevs.get(l).getName()+" .. .. . .  . . "+ fogDevs.get(l).getId());				
+		}	
+			
+		List<AppModule> modules = getApplication().getModules();
+		int mSize=modules.size();
+		int psoorig[]=new int[fogSize];
+		int l=0;
+		System.out.println("s/../././././.......... "+ mSize);
+		for(int p=0; p<fogSize;p++)
+		{
+			if(fogDevs.get(p).getName().startsWith("m"))
+			{
+				psoorig[l++]=fogDevs.get(p).getId();	
+			   //System.out.println("s/../././././.......... "+ psoorig[l-1]);
+			}
+		}
+		int psoorig1[]=new int[l];
+		for(int p=0; p<l;p++)
+		{
+			psoorig1[p]=psoorig[p];
+			// System.out.println("s/../././././.......... "+ psoorig1[p]);
+		}
+		//int pso[]=psoorig;
+		int pso[]=fogPSO(psoorig1,modules);
+	
+		int k=0;
+		for(AppModule module : modules)
+		{
+			//uncoment following lines for clouOnly
+		      //FogDevice cloud = getDeviceById(cloudId);
+		      //createModuleInstanceOnDevice(module, cloud);
+			//uncoment following lines for pso,EPSO, LEVY etc..
+		        FogDevice fDev = getDeviceById(pso[k++]);	   
+			    createModuleInstanceOnDevice(module, fDev);
+			
+			// if(fDev.getName().startsWith("m"))
+		}
+	}
+
+	public int[] fogPSO(int[] psoorig, List<AppModule> modules) 
+	{	
+		int[][] oldpop= new int[20][modules.size()];
+		int[][] newpop= new int[20][modules.size()];
+		int[][] velocity= new int[20][modules.size()];
+		double[] pBest= new double[20];
+		double gBest=Double.MAX_VALUE;
+		double gWorst=Double.MIN_VALUE;
+		int c1=2,c2=3;
+		double iw=0.7;
+		for(int k=0;k<20;k++)
+		{
+			for(int j=0;j<modules.size();j++)
+			{
+				oldpop[k][j]=psoorig[r.nextInt(psoorig.length-1)];
+				newpop[k][j]=psoorig[r.nextInt(psoorig.length-1)];
+				velocity[k][j]= psoorig[r.nextInt(psoorig.length-1)];
+				//System.out.println(oldpop[k][j]+"   ola dn new are" + newpop[k][j]);
+			}			
+		}
+		double[] oldFitness=new double[20];
+		for(int b=0;b<oldpop.length;b++)
+		{
+			oldFitness[b]=getEnergy(oldpop[b], modules);
+			pBest[b]=oldFitness[b];
+			if(gBest>pBest[b])
+			{
+				gBest=pBest[b];
+			}
+			if(gWorst<pBest[b])
+			{
+				gWorst=pBest[b];
+			}
+		}
+		int max=0;
+		int n=0;
+		while(max<1000)
+		{
+			for(int k=0;k<20;k++)
+			{
+				if(k!=n)
+				{
+					for(int j=0;j<modules.size();j++)
+					{
+						//EPSO
+						    //velocity[k][j]= (int) (iw*velocity[k][j]+c1*(getEnergy(oldpop[k], modules)- pBest[k])+ c2*(-gBest+getEnergy(oldpop[k], modules)));
+						//PSO
+						    velocity[k][j]= (int) (iw*velocity[k][j]+c1*r.nextDouble()*(getEnergy(oldpop[k], modules)- pBest[k])+ c2*r.nextDouble()*(-gBest+getEnergy(oldpop[k], modules)));
+						//JAYA
+						    //velocity[k][j]= (int) (r.nextDouble()*(gBest-getEnergy(oldpop[k], modules) - r.nextDouble()*(getEnergy(oldpop[k], modules)- gWorst)));
+						newpop[k][j]=newpop[k][j]+velocity[k][j];
+						System.out.println(newpop[k][j]+"   ola dn new are   "+ setNewpop(newpop[k][j],psoorig));
+						//for Levy uncoment the following 185-187
+						//newpop[k][j]+=levy(1.001)/100;
+                         //if(newpop[k][j]<0)
+                        //	 setNewpop(newpop[k][j],psoorig);	
+                         
+						newpop[k][j]=setNewpop(newpop[k][j],psoorig);						
+					}from skmine.datasets.fimi import fetch_accidents
+from itertools import combinations
+
+def generate_candidates(prev_candidates, k):
+    candidates = set()
+    for itemset1 in prev_candidates:
+        for itemset2 in prev_candidates:
+            union_set = itemset1.union(itemset2)
+            if len(union_set) == k:
+                candidates.add(union_set)
+    return candidates
+
+def prune_candidates(candidates, prev_frequent_sets):
+    pruned_candidates = set()
+    for candidate in candidates:
+        subsets = list(combinations(candidate, len(candidate) - 1))
+        if all(frozenset(subset) in prev_frequent_sets for subset in subsets):
+            pruned_candidates.add(candidate)
+    return pruned_candidates
+
+def apriori(dataset, min_support):
+    itemsets = [set(transaction) for transaction in dataset]
+    num_transactions = len(itemsets)
+
+    # Initialize frequent itemsets
+    frequent_sets = [frozenset([item]) for item in set.union(*itemsets) if sum(1 for transaction in itemsets if item in transaction) >= min_support]
+
+
+    # Initialize frequent itemsets
+    #frequent_sets = [frozenset([item]) for item in set.union(*itemsets) if itemsets.count(set([item])) >= min_support]
+
+    k = 2
+    while frequent_sets:
+        candidate_sets = generate_candidates(frequent_sets, k)
+        candidate_counts = {candidate: 0 for candidate in candidate_sets}
+
+        for itemset in itemsets:
+            for candidate in candidate_sets:
+                if candidate.issubset(itemset):
+                    candidate_counts[candidate] += 1
+
+        frequent_sets = [itemset for itemset, count in candidate_counts.items() if count >= min_support]
+        k += 1
+
+    return frequent_sets
+
+# Fetch the accidents dataset
+accidents = fetch_accidents()
+
+# Set the minimum support threshold
+min_support = 2
+
+# Apply the Apriori algorithm
+result = apriori(accidents, min_support)
+print("Frequent Itemsets:", result)
+
+				}
+			}
+			double[] newFitness=new double[20];
+			for(int b=0;b<newpop.length;b++)
+			{
+			   newFitness[b]=getEnergy(newpop[b], modules);
+			}
+			n=getBest(newFitness);
+			if(newFitness[n]<gBest)
+			{
+				gBest=newFitness[n];
+				pBest[n]=newFitness[n];
+			}
+			else
+			{
+				
+				//newpop[n]=oldpop[n];
+			}
+			//oldpop=newpop;
+			max++;
+		}
+		return newpop[n];
+	}
+	
+	public int setNewpop(int k, int[] orig)
+	{
+		Arrays.sort(orig);
+		int s=0;
+		for(int g=0;g<orig.length;g++)
+		{
+			if(k>= orig[g])
+			{
+				s++;
+			}
+			else
+				break;
+		}
+		if(s>0)
+		{
+			//System.out.println("update is- "+k);
+			k=orig[s-1];
+			System.out.println("update is- "+getDeviceById(k).getName());
+		}
+		else
+		{
+			k=orig[0];
+			System.out.println("update is- "+ k);
+		}
+		//return k;
+		return orig[r.nextInt(orig.length-1)];
+	}
+	private int getBest(double[] arr)
+	{
+		/*int res = arr[0];
+        
+        for (int i = 1; i < arr.length; i++)
+            res = Math.min(res, arr[i]);
+        return res;*/
+        
+        double min = arr[0];  
+        int minIndex=0;
+        //Loop through the array  
+        for (int i = 0; i < arr.length; i++) 
+        {  
+            //Compare elements of array with min  
+           if(arr[i] <min)
+           {
+               min = arr[i];  
+               minIndex=i;
+           }
+        } 
+        return minIndex;
+	}	
+		
+	private int getWorst(double[] arr)
+	{
+		/*int res = arr[0];        
+        for (int i = 1; i < arr.length; i++)
+            res = Math.max(res, arr[i]);
+        return res;*/
+		double max = arr[0];  
+        int maxIndex=0;
+        //Loop through the array  
+        for (int i = 0; i < arr.length; i++) 
+        {  
+            //Compare elements of array with min  
+           if(arr[i] > max)
+           {
+        	   max = arr[i];  
+        	   maxIndex=i;
+           }
+        }
+        return maxIndex;
+	}		
+	   public double levy(double alpha) 
+    {
+		Random random = new Random();
+		double ur = random.nextDouble();
+		if (random.nextInt(2) != 1) {
+			return 1 / Math.pow(ur, 1 / alpha);
+		} else {
+			return -1 / Math.pow(ur, 1 / alpha);
+		}
+	}
+       
+	private double getEnergy(int[] place,  List<AppModule> modules)
+	{
+		double result = 0.0;
+		double[] util=new double[getFogDevices().size()];
+		double[] power=new double[getFogDevices().size()];
+		int i=0;
+		
+		Map<Integer, Double> map = new LinkedHashMap<>();
+		int p=0;
+		for(AppModule module : modules)
+		{
+			FogDevice fd=getDeviceById(place[p]);
+			map.put(place[p], 0.0);
+			p++;
+		}
+		p=0;
+		
+		for(AppModule module : modules)
+		{
+			int k=place[p];
+			FogDevice fd=getDeviceById(k);
+			map.put(k, (map.get(k) + module.getMips()));
+			p++;
+			//System.out.println("all keys are :" + map.keySet().toString());
+		}
+		//System.out.println("all module are :" + p);
+		
+		for (int n : map.keySet())
+		{		
+			//System.out.println(n+"==>"+map.get(n));
+			double util1=map.get(n);
+			FogDevice d=getDeviceById(n);
+			util1=util1/d.getHost().getTotalMips();	
+			if(util1>1)
+				util1=1;
+			double power1=d.getHost().getPowerModel().getPower(util1);
+			//power[i]=appModules.stream().mapToDouble(x -> x.getCurrentRequestedRam()).sum();
+		    result=result+power1;
+			//fogDevice.setEnergyConsumption(power[i]);
+		}
+		return result;
+	}
+
+	public List<Actuator> getActuators() {
+		return actuators;
+	}
+
+	public void setActuators(List<Actuator> actuators) {
+		this.actuators = actuators;
+	}
+
+	public List<Sensor> getSensors() {
+		return sensors;
+	}
+
+	public void setSensors(List<Sensor> sensors) {
+		this.sensors = sensors;
+	}
+}
